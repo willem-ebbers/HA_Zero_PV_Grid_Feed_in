@@ -2,7 +2,7 @@ blueprint:
   name: Control PV Limit to avoid exporting to the grid
   description: >
     # Zero Feed In Automation
-    **Version: 0.0.4**
+    **Version: 0.0.5**
 
     # Summary
     This automation will react on changes of energy imported or exported from the grid.
@@ -84,6 +84,15 @@ blueprint:
           min: 1
           max: 2
           step: 1
+    SetpointMode:
+      name: Select the Setpoint Mode
+      description: 'Mode1: use watt as power limiter setpoint. Mode 2: Use % as power limiter setpoint'
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 2
+          step: 1
     GridPowerMeters:
       name: Sensors measuring Grid import or export e.g. all 3 phases in W
       description: All power meters will be summed up to define the total grid import or export. Choose e.g. all 3 sensors measuring L1, L2 & L3 in W
@@ -99,8 +108,8 @@ blueprint:
           device_class: power
           multiple: true
     NonPersistantLimit:
-      name: Entity to set the non persistant absolut limit in W
-      description: Choose the entity to define the limit of PV generation in W
+      name: Entity to set the non persistant absolut limit in W or %
+      description: Choose the entity to define the limit of PV generation in W or % (depending on Setpoint Mode
       selector:
         entity:
     InverterOnlineStatus:
@@ -117,6 +126,7 @@ variables:
   PVPowerMetersvar: !input 'PVPowerMeters'
   GridPowerMetersvar: !input 'GridPowerMeters'
   ctlr_mode: !input 'ModeSelector'
+  sp_mode: !input 'SetpointMode'
   pvgeneration: "{% set pvgeneration = expand(PVPowerMetersvar) | map(attribute='state') |map('float',default=0) | sum %} {{pvgeneration}}"
   gridsum: "{% set gridconsumption = expand(GridPowerMetersvar) | map(attribute='state') |map('float',default=0) | sum %} {{gridconsumption}}"
   modifier: !input 'AllowedFeedIn'
@@ -125,6 +135,8 @@ variables:
   new_setpoint_mode1: "{% set setpoint = gridsum + modifier_setpoint|float(0) + states(currentlimit)|float(0) -5 %}{% if setpoint > upperlimit -%}{% set setpoint = upperlimit %}{% elif setpoint < lowerlimit %}{% set setpoint = lowerlimit %}{%- endif %}{{setpoint}}"
   new_setpoint_mode2: '{% set setpoint = gridsum + modifier_setpoint|float(0) + pvgeneration + 5 %}{% if setpoint > upperlimit -%}{% set setpoint = upperlimit %}{% elif setpoint < lowerlimit %}{% set setpoint = lowerlimit %}{%- endif %}{{setpoint}}'
   new_setpoint: '{% if ctlr_mode == 1 -%} {{new_setpoint_mode1 | round(0)}} {% elif ctlr_mode == 2 -%} {{new_setpoint_mode2 | round(0)}} {%- endif %}'
+  perc_setpoint: "{% set perc_setpoint = (new_setpoint/(upperlimit/100))|round(0) %} {{perc_setpoint}}"
+  setpoint: '{% if sp_mode == 1 -%} {{new_setpoint}} {% elif sp_mode == 2 -%} {{perc_setpoint}} {%- endif %}'
 trigger:
 - platform: state
   entity_id: !input 'GridPowerMeters'
@@ -141,10 +153,10 @@ action:
   - service: logbook.log
     data_template:
       name: "PVSetpoint:"
-      message: "Gridsum: {{gridsum}} W & PVGeneration: {{pvgeneration}} W -> new_setpoint: {{new_setpoint}} W"
+      message: "Gridsum: {{gridsum}} W & PVGeneration: {{pvgeneration}} W -> new_setpoint: {{new_setpoint}} W & Percentage: {{perc_setpoint}} %"
   - service: number.set_value
     target:
       entity_id: !input 'NonPersistantLimit'
     data:
-      value: "{{new_setpoint}}"
+      value: "{{setpoint}}"
 mode: single
